@@ -1,0 +1,44 @@
+//Source: https://techcommunity.microsoft.com/t5/microsoft-defender-for-endpoint/hunting-for-network-signatures-in-microsoft-defender-for/ba-p/3429520
+DeviceNetworkEvents 
+| where ActionType == "NetworkSignatureInspected"
+| where Timestamp > ago(7d)
+| extend SigName = parse_json(AdditionalFields).SignatureName , SigMatchedContent = parse_json(AdditionalFields).SignatureMatchedContent, SigSampleContent = parse_json(AdditionalFields).SignatureSampleContent
+| distinct tostring(SigName)
+
+//Flag weak SSH protocol usage:
+DeviceNetworkEvents
+| where ActionType == "NetworkSignatureInspected"
+| where Timestamp > ago(7d)
+| extend SigName = parse_json(AdditionalFields).SignatureName, SigMatchedContent = parse_json(AdditionalFields).SignatureMatchedContent, SigSampleContent = parse_json(AdditionalFields).SignatureSampleContent
+| where SigName == 'SSH'
+| where SigMatchedContent == 'SSH-1'
+| project Timestamp, DeviceName, LocalIP, RemoteIP, RemotePort
+
+//Find network events that occured on non-standard ports
+DeviceNetworkEvents 
+| where ActionType == "NetworkSignatureInspected" 
+| where Timestamp > ago(7d)
+| extend json = parse_json(AdditionalFields)
+| project LocalIP,LocalPort,RemoteIP,RemotePort,SignatureName = tostring(json.SignatureName),SignatureMatchedContent = tostring(json.SignatureMatchedContent),SamplePacketContent = tostring(json.SamplePacketContent)
+// Looks for SMB_Client signatures on ports other than 445 and 139
+|where (SignatureName == "SMB_Client" and LocalPort !in(445,139) and 
+// Looks for DNS Requests on non-standard ports. 
+RemotePort !in(445,139)) or (SignatureName == "DNS_Request" and LocalPort !in(53,137,5353,5355) and RemotePort !in(53,137,5353,5355))
+
+//Find what DNS servers are used by clients
+DeviceNetworkEvents 
+| where ActionType == "NetworkSignatureInspected" 
+| where Timestamp > ago(7d)
+|extend json = parse_json(AdditionalFields)
+|project LocalIP,LocalPort,RemoteIP,RemotePort,SignatureName = tostring(json.SignatureName),SignatureMatchedContent = tostring(json.SignatureMatchedContent),SamplePacketContent = tostring(json.SamplePacketContent)
+|where SignatureName == "DNS_Request" and RemotePort == 53
+|summarize dcount(LocalIP) by RemoteIP
+
+//Find executable files that were downloaded over HTTP
+DeviceNetworkEvents 
+| where ActionType == "NetworkSignatureInspected" 
+| where Timestamp > ago(7d)
+| extend json = parse_json(AdditionalFields)
+| project LocalIP,LocalPort,RemoteIP,RemotePort,SignatureName = tostring(json.SignatureName),SignatureMatchedContent = tostring(json.SignatureMatchedContent),SamplePacketContent = tostring(json.SamplePacketContent)
+| where SignatureName == "HTTP_Client" 
+| where SignatureMatchedContent has ".exe"
